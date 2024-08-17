@@ -1,9 +1,10 @@
 const express = require("express");
 const multer = require("multer");
-const { BlobServiceClient } = require("@azure/storage-blob");
+const { ContainerClient  } = require("@azure/storage-blob");
 
 const app = express();
 
+const sas_url = 'https://hstvstuff.blob.core.windows.net/?sv=2022-11-02&ss=b&srt=sco&sp=rwdlaciytfx&se=2025-05-01T16:47:59Z&st=2024-07-31T08:47:59Z&spr=https,http&sig=WxcMMIafo8noK7hG5tt2IEDYayrOUDVf%2FfBT0QQCTBU%3D';
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -20,8 +21,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
         const container = req.body.container === '2' ? 'videos' : 'thumbnails';
         const blobName = file.originalname;
 
-        const blobServiceClient = BlobServiceClient.fromConnectionString(process.env.AZURE_STORAGE_CONNECTION_STRING)
-        const containerClient = blobServiceClient.getContainerClient(container);
+        const containerUrl = `https://hstvstuff.blob.core.windows.net/${container}?${sas_url.split('?')[1]}`;
+        const containerClient = new ContainerClient(containerUrl);
         const blockBlobClient = containerClient.getBlockBlobClient(blobName);
 
         await blockBlobClient.uploadData(req.file.buffer, { blobHTTPHeaders: { blobContentType: req.file.mimetype }, onProgress: (ev) => console.log(ev) })
