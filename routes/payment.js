@@ -49,26 +49,26 @@ async function processPayment(amount, phone, email, userId, host, currency) {
       console.log('Poll URL:', response.pollUrl);
       console.log('Instructions:', response.instructions);
 
-      // Log the poll URL for debugging purposes
       const pollUrl = response.pollUrl;
       console.log('Poll URL:', pollUrl);
 
-      // Poll the transaction status
       const status = await pollPaymentStatus(selectedPaynow, pollUrl);
       console.log('Final payment status:', status);
 
-      // Detailed logging for debugging
       console.log('Status object:', JSON.stringify(status, null, 2));
 
-      // Insert payment status into payments table
+      // Determine paymentStatus as a boolean
+      const paymentStatus = status.status === 'paid' ? true : false;
+
+      // Upsert payment status into payments table
       const { data: paymentData, error: paymentError } = await supabase
         .from('payments')
-        .insert([
+        .upsert([
           {
             user_id: userId,
             amount: amount,
             payment_method: 'ecocash',
-            status: status.status === 'paid' ? 'Paid' : 'Failed',
+            subscription_status: paymentStatus,
           },
         ]);
 
@@ -77,18 +77,17 @@ async function processPayment(amount, phone, email, userId, host, currency) {
         throw paymentError;
       }
 
-      if (status.status === 'paid') {
-        const { data, error } = await supabase
-          .from('profiles')
-          .update({ issubscribed: true, subscription_start_date: new Date().toISOString() })
-          .eq('id', userId);
+      // Update issubscribed in profiles based on the paymentStatus
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .update({ issubscribed: paymentStatus })
+        .eq('id', userId);
 
-        if (error) {
-          console.error('Error updating user subscription:', error.message);
-          throw error;
-        }
-        console.log('User subscription updated successfully.');
+      if (profileError) {
+        console.error('Error updating issubscribed in profiles:', profileError.message);
+        throw profileError;
       }
+      console.log('issubscribed updated in profiles table successfully.');
 
       return status;
     } else {
@@ -128,9 +127,9 @@ router.get('/return', (req, res) => {
   res.status(200).send('Return received');
 });
 
-// Schedule task to update subscription status every month
-cron.schedule('0 0 1 * *', async () => {
-  console.log('Running monthly subscription check...');
+// Schedule task to update subscription status every day
+cron.schedule('0 0 * * *', async () => { // Runs every day at midnight
+  console.log('Running daily subscription check...');
 
   const { data: profiles, error } = await supabase
     .from('profiles')
@@ -146,10 +145,11 @@ cron.schedule('0 0 1 * *', async () => {
 
   for (const profile of profiles) {
     const subscriptionStartDate = new Date(profile.subscription_start_date);
-    const oneMonthLater = new Date(subscriptionStartDate);
-    oneMonthLater.setMonth(subscriptionStartDate.getMonth() + 1);
+    const nextBillingDate = new Date(subscriptionStartDate);
+    nextBillingDate.setMonth(subscriptionStartDate.getMonth() + 1); // Adds 1 month to the subscription start date
 
-    if (currentDate >= oneMonthLater) {
+    if (currentDate >= nextBillingDate) {
+      // Downgrade the user as their subscription has expired
       const { data, error } = await supabase
         .from('profiles')
         .update({ issubscribed: false })
@@ -164,5 +164,6 @@ cron.schedule('0 0 1 * *', async () => {
     }
   }
 });
+
 
 module.exports = router;
